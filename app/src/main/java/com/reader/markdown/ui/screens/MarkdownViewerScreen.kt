@@ -24,6 +24,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import com.reader.markdown.settings.SettingsManager
 import io.noties.markwon.Markwon
 import io.noties.markwon.ext.strikethrough.StrikethroughPlugin
 import io.noties.markwon.ext.tables.TablePlugin
@@ -45,8 +46,7 @@ fun parseToc(content: String): List<TocItem> {
             val match = Regex("^(#{1,4})\\s+(.+)").find(trimmed)
             if (match != null) {
                 val level = match.groupValues[1].length - 1
-                val title = match.groupValues[2].trim()
-                    .replace(Regex("[*`~_]"), "")
+                val title = match.groupValues[2].trim().replace(Regex("[*`~_]"), "")
                 items.add(TocItem(level, title, index))
             }
         }
@@ -59,13 +59,13 @@ fun parseToc(content: String): List<TocItem> {
 fun MarkdownViewerScreen(
     filePath: String,
     displayTitle: String? = null,
+    settings: SettingsManager,
     onBack: () -> Unit
 ) {
     val context = LocalContext.current
     var content by remember { mutableStateOf("") }
     var editContent by remember { mutableStateOf("") }
     var fileName by remember { mutableStateOf(displayTitle ?: "") }
-    var fontSize by remember { mutableStateOf(16f) }
     var showFontDialog by remember { mutableStateOf(false) }
     var debugInfo by remember { mutableStateOf("") }
     var showToc by remember { mutableStateOf(false) }
@@ -73,47 +73,45 @@ fun MarkdownViewerScreen(
     var isEditing by remember { mutableStateOf(false) }
     var isModified by remember { mutableStateOf(false) }
 
-    // 判断文件是否可写
     val file = remember(filePath) { File(filePath) }
     val isWritable = remember(filePath) { file.exists() && file.canWrite() }
 
-    // 加载文件内容
+    // 从设置读取
+    val readerFontSize = settings.readerFontSize
+    val readerLineHeight = settings.readerLineHeight
+    val readerFontFamily = when (settings.readerFontFamily) {
+        "serif" -> FontFamily.Serif
+        "monospace" -> FontFamily.Monospace
+        else -> FontFamily.SansSerif
+    }
+    val editorFontSize = settings.editorFontSize
+
+    // 加载文件
     LaunchedEffect(filePath) {
-        val sb = StringBuilder()
-        sb.appendLine("路径: $filePath")
         try {
             if (!file.exists()) {
                 content = "文件不存在\n\n$filePath"
                 fileName = "错误"
-                debugInfo = sb.toString()
                 return@LaunchedEffect
             }
             if (!file.canRead()) {
                 content = "无法读取文件\n\n$filePath"
                 fileName = "错误"
-                debugInfo = sb.toString()
                 return@LaunchedEffect
             }
-            if (fileName.isBlank()) {
-                fileName = file.nameWithoutExtension
-            }
+            if (fileName.isBlank()) fileName = file.nameWithoutExtension
             content = file.readText()
             editContent = content
             tocItems = parseToc(content)
-            sb.appendLine("内容长度: ${content.length}")
-            sb.appendLine("目录项: ${tocItems.size}")
-            if (content.isBlank()) {
-                content = "（空文件）"
-                editContent = ""
+            if (settings.showTocByDefault && tocItems.isNotEmpty()) {
+                showToc = true
             }
+            if (content.isBlank()) { content = "（空文件）"; editContent = "" }
         } catch (e: Exception) {
             content = "读取异常: ${e.message}"
-            sb.appendLine("异常: ${e.stackTraceToString()}")
         }
-        debugInfo = sb.toString()
     }
 
-    // 保存文件
     fun saveFile() {
         try {
             file.writeText(editContent)
@@ -126,7 +124,6 @@ fun MarkdownViewerScreen(
         }
     }
 
-    // 返回确认（有未保存修改时）
     var showBackConfirm by remember { mutableStateOf(false) }
     if (showBackConfirm) {
         AlertDialog(
@@ -134,88 +131,36 @@ fun MarkdownViewerScreen(
             title = { Text("未保存的修改") },
             text = { Text("当前有未保存的修改，是否保存？") },
             confirmButton = {
-                TextButton(onClick = {
-                    showBackConfirm = false
-                    saveFile()
-                    onBack()
-                }) { Text("保存并返回") }
+                TextButton(onClick = { showBackConfirm = false; saveFile(); onBack() }) { Text("保存并返回") }
             },
             dismissButton = {
                 Row {
-                    TextButton(onClick = {
-                        showBackConfirm = false
-                        onBack()
-                    }) { Text("不保存") }
+                    TextButton(onClick = { showBackConfirm = false; onBack() }) { Text("不保存") }
                     TextButton(onClick = { showBackConfirm = false }) { Text("取消") }
                 }
             }
         )
     }
 
-    // 字体大小调整对话框
-    if (showFontDialog) {
-        AlertDialog(
-            onDismissRequest = { showFontDialog = false },
-            title = { Text("字体大小") },
-            text = {
-                Column {
-                    Text("当前大小: ${fontSize.toInt()}sp")
-                    Slider(
-                        value = fontSize,
-                        onValueChange = { fontSize = it },
-                        valueRange = 12f..24f,
-                        steps = 11
-                    )
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { showFontDialog = false }) {
-                    Text("确定")
-                }
-            }
-        )
-    }
-
-    // 目录底部弹出
+    // 目录弹窗
     if (showToc) {
-        ModalBottomSheet(
-            onDismissRequest = { showToc = false },
-            dragHandle = {
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Box(
-                        modifier = Modifier
-                            .width(40.dp)
-                            .height(4.dp)
-                    ) {
-                        Surface(
-                            shape = MaterialTheme.shapes.small,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
-                            modifier = Modifier.fillMaxSize()
-                        ) {}
-                    }
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Text("目录", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                    Spacer(modifier = Modifier.height(8.dp))
+        ModalBottomSheet(onDismissRequest = { showToc = false }, dragHandle = {
+            Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+                Spacer(Modifier.height(8.dp))
+                Box(Modifier.width(40.dp).height(4.dp)) {
+                    Surface(shape = MaterialTheme.shapes.small, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f), modifier = Modifier.fillMaxSize()) {}
                 }
+                Spacer(Modifier.height(12.dp))
+                Text("目录", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(8.dp))
             }
-        ) {
+        }) {
             if (tocItems.isEmpty()) {
-                Box(
-                    modifier = Modifier.fillMaxWidth().padding(32.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text("无目录（未找到标题）", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
+                    Text("无目录", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             } else {
-                TocPanel(
-                    items = tocItems,
-                    onItemClick = { showToc = false },
-                    modifier = Modifier.fillMaxWidth().heightIn(max = 500.dp)
-                )
+                TocPanel(items = tocItems, onItemClick = { showToc = false }, modifier = Modifier.fillMaxWidth().heightIn(max = 500.dp))
             }
         }
     }
@@ -225,41 +170,29 @@ fun MarkdownViewerScreen(
             TopAppBar(
                 title = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(text = fileName, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(fileName, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         if (isModified) {
-                            Spacer(modifier = Modifier.width(4.dp))
+                            Spacer(Modifier.width(4.dp))
                             Text("●", color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
                         }
                     }
                 },
                 navigationIcon = {
-                    IconButton(onClick = {
-                        if (isModified) showBackConfirm = true else onBack()
-                    }) {
+                    IconButton(onClick = { if (isModified) showBackConfirm = true else onBack() }) {
                         Icon(Icons.Default.ArrowBack, contentDescription = "返回")
                     }
                 },
                 actions = {
                     if (isEditing) {
-                        // 编辑模式：保存按钮
                         IconButton(onClick = { saveFile() }) {
                             Icon(Icons.Default.Save, contentDescription = "保存", tint = MaterialTheme.colorScheme.primary)
                         }
-                        // 退出编辑
-                        IconButton(onClick = {
-                            if (isModified) showBackConfirm = true
-                            else { isEditing = false }
-                        }) {
+                        IconButton(onClick = { if (isModified) showBackConfirm = true else isEditing = false }) {
                             Icon(Icons.Default.Visibility, contentDescription = "预览")
                         }
                     } else {
-                        // 预览模式
-                        // 编辑按钮（只有可写的文件才显示）
                         if (isWritable) {
-                            IconButton(onClick = {
-                                editContent = content
-                                isEditing = true
-                            }) {
+                            IconButton(onClick = { editContent = content; isEditing = true }) {
                                 Icon(Icons.Default.Edit, contentDescription = "编辑")
                             }
                         }
@@ -267,12 +200,6 @@ fun MarkdownViewerScreen(
                             IconButton(onClick = { showToc = true }) {
                                 Icon(Icons.Default.List, contentDescription = "目录")
                             }
-                        }
-                        IconButton(onClick = { fontSize = (fontSize - 2f).coerceAtLeast(12f) }) {
-                            Icon(Icons.Default.TextDecrease, contentDescription = "减小字体")
-                        }
-                        IconButton(onClick = { fontSize = (fontSize + 2f).coerceAtMost(24f) }) {
-                            Icon(Icons.Default.TextIncrease, contentDescription = "增大字体")
                         }
                         IconButton(onClick = { showFontDialog = true }) {
                             Icon(Icons.Default.FormatSize, contentDescription = "字体设置")
@@ -282,32 +209,49 @@ fun MarkdownViewerScreen(
             )
         }
     ) { paddingValues ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(paddingValues)
-        ) {
+        Column(Modifier.fillMaxSize().padding(paddingValues)) {
             // 调试信息
             if (content.startsWith("文件不存在") || content.startsWith("无法读取") || content.startsWith("读取异常")) {
-                Card(
-                    modifier = Modifier.fillMaxWidth().padding(8.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
-                ) {
-                    Column(modifier = Modifier.padding(12.dp)) {
-                        Text(text = debugInfo, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onErrorContainer)
+                Card(Modifier.fillMaxWidth().padding(8.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) {
+                    Column(Modifier.padding(12.dp)) {
+                        Text(debugInfo, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onErrorContainer)
                         if (com.reader.markdown.MainActivity.lastDebugLog.isNotEmpty()) {
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Text(text = "--- Intent解析日志 ---", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
-                            Text(text = com.reader.markdown.MainActivity.lastDebugLog, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onErrorContainer)
+                            Spacer(Modifier.height(8.dp))
+                            Text("--- Intent解析日志 ---", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+                            Text(com.reader.markdown.MainActivity.lastDebugLog, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onErrorContainer)
                         }
                     }
                 }
             }
 
+            // 字体调整对话框
+            if (showFontDialog) {
+                var tempFontSize by remember { mutableStateOf(if (isEditing) editorFontSize else readerFontSize) }
+                AlertDialog(
+                    onDismissRequest = { showFontDialog = false },
+                    title = { Text("字体大小") },
+                    text = {
+                        Column {
+                            Text("${tempFontSize.toInt()}sp")
+                            Slider(value = tempFontSize, onValueChange = { tempFontSize = it }, valueRange = 10f..28f, steps = 17)
+                        }
+                    },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            if (isEditing) settings.editorFontSize = tempFontSize else settings.readerFontSize = tempFontSize
+                            showFontDialog = false
+                        }) { Text("确定") }
+                    }
+                )
+            }
+
             if (isEditing) {
-                // 编辑模式：Markdown 源码编辑器
-                EditableMarkdownContent(
+                // 编辑器
+                EditorContent(
                     content = editContent,
+                    fontSize = editorFontSize,
+                    tabSize = settings.editorTabSize,
+                    wordWrap = settings.editorWordWrap,
                     onContentChange = { newContent ->
                         editContent = newContent
                         isModified = (newContent != content)
@@ -315,23 +259,35 @@ fun MarkdownViewerScreen(
                     modifier = Modifier.fillMaxSize()
                 )
             } else {
-                // 预览模式
-                Row(modifier = Modifier.fillMaxSize()) {
-                    // 大屏目录侧栏
+                Row(Modifier.fillMaxSize()) {
                     BoxWithConstraints {
                         if (maxWidth > 600.dp && tocItems.isNotEmpty()) {
-                            TocSidePanel(
-                                items = tocItems,
-                                onItemClick = {},
-                                modifier = Modifier.width(220.dp).fillMaxHeight()
-                            )
+                            TocSidePanel(items = tocItems, onItemClick = {}, modifier = Modifier.width(220.dp).fillMaxHeight())
                         }
                     }
-                    // Markdown 渲染
-                    MarkdownContent(
-                        content = content,
-                        fontSize = fontSize,
-                        modifier = Modifier.fillMaxSize().weight(1f)
+                    AndroidView(
+                        modifier = Modifier.fillMaxSize().weight(1f).verticalScroll(rememberScrollState()),
+                        factory = { ctx ->
+                            TextView(ctx).apply {
+                                this.textSize = readerFontSize
+                                setPadding(32, 24, 32, 24)
+                            }
+                        },
+                        update = { textView ->
+                            textView.textSize = readerFontSize
+                            textView.setLineSpacing(0f, readerLineHeight)
+                            textView.typeface = when (settings.readerFontFamily) {
+                                "serif" -> android.graphics.Typeface.SERIF
+                                "monospace" -> android.graphics.Typeface.MONOSPACE
+                                else -> android.graphics.Typeface.SANS_SERIF
+                            }
+                            val markwon = Markwon.builder(context)
+                                .usePlugin(StrikethroughPlugin.create())
+                                .usePlugin(TablePlugin.create(context))
+                                .usePlugin(TaskListPlugin.create(context))
+                                .build()
+                            markwon.setMarkdown(textView, content)
+                        }
                     )
                 }
             }
@@ -339,17 +295,18 @@ fun MarkdownViewerScreen(
     }
 }
 
-/**
- * Markdown 源码编辑器
- */
 @Composable
-fun EditableMarkdownContent(
+fun EditorContent(
     content: String,
+    fontSize: Float,
+    tabSize: Int,
+    wordWrap: Boolean,
     onContentChange: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
     var text by remember(content) { mutableStateOf(content) }
     val scrollState = rememberScrollState()
+    val indent = " ".repeat(tabSize)
 
     Box(modifier = modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
         BasicTextField(
@@ -358,27 +315,20 @@ fun EditableMarkdownContent(
                 text = newText
                 onContentChange(newText)
             },
-            modifier = Modifier
-                .fillMaxSize()
-                .verticalScroll(scrollState),
+            modifier = Modifier.fillMaxSize().then(
+                if (!wordWrap) Modifier.verticalScroll(scrollState) else Modifier
+            ),
             textStyle = TextStyle(
                 fontFamily = FontFamily.Monospace,
-                fontSize = 14.sp,
-                lineHeight = 20.sp,
+                fontSize = fontSize.sp,
+                lineHeight = (fontSize * 1.5f).sp,
                 color = MaterialTheme.colorScheme.onSurface
             ),
             cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
             decorationBox = { innerTextField ->
-                Box(modifier = Modifier.fillMaxSize()) {
+                Box(Modifier.fillMaxSize()) {
                     if (text.isEmpty()) {
-                        Text(
-                            "输入 Markdown 内容...",
-                            style = TextStyle(
-                                fontFamily = FontFamily.Monospace,
-                                fontSize = 14.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-                            )
-                        )
+                        Text("输入 Markdown 内容...", style = TextStyle(fontFamily = FontFamily.Monospace, fontSize = fontSize.sp, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)))
                     }
                     innerTextField()
                 }
@@ -387,34 +337,24 @@ fun EditableMarkdownContent(
     }
 }
 
+// ── 目录组件 ──
+
 @Composable
-fun TocPanel(
-    items: List<TocItem>,
-    onItemClick: (TocItem) -> Unit,
-    modifier: Modifier = Modifier
-) {
+fun TocPanel(items: List<TocItem>, onItemClick: (TocItem) -> Unit, modifier: Modifier = Modifier) {
     LazyColumn(modifier = modifier.padding(horizontal = 16.dp)) {
-        items(items) { item ->
-            TocItemRow(item = item, onClick = { onItemClick(item) })
-        }
-        item { Spacer(modifier = Modifier.height(32.dp)) }
+        items(items) { TocItemRow(it) { onItemClick(it) } }
+        item { Spacer(Modifier.height(32.dp)) }
     }
 }
 
 @Composable
-fun TocSidePanel(
-    items: List<TocItem>,
-    onItemClick: (TocItem) -> Unit,
-    modifier: Modifier = Modifier
-) {
+fun TocSidePanel(items: List<TocItem>, onItemClick: (TocItem) -> Unit, modifier: Modifier = Modifier) {
     Surface(modifier = modifier, tonalElevation = 1.dp) {
         Column {
             Text("目录", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, modifier = Modifier.padding(16.dp))
             Divider()
-            LazyColumn(modifier = Modifier.weight(1f)) {
-                items(items) { item ->
-                    TocItemRow(item = item, onClick = { onItemClick(item) })
-                }
+            LazyColumn(Modifier.weight(1f)) {
+                items(items) { TocItemRow(it) { onItemClick(it) } }
             }
         }
     }
@@ -434,36 +374,8 @@ fun TocItemRow(item: TocItem, onClick: () -> Unit) {
         else -> MaterialTheme.colorScheme.onSurfaceVariant
     }
     ListItem(
-        headlineContent = {
-            Text(text = item.title, style = textStyle, color = color, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(start = indent))
-        },
+        headlineContent = { Text(item.title, style = textStyle, color = color, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(start = indent)) },
         modifier = Modifier.clickable(onClick = onClick),
         tonalElevation = 0.dp
-    )
-}
-
-@Composable
-fun MarkdownContent(content: String, fontSize: Float, modifier: Modifier = Modifier) {
-    val context = LocalContext.current
-    val scrollState = rememberScrollState()
-    val markwon = remember {
-        Markwon.builder(context)
-            .usePlugin(StrikethroughPlugin.create())
-            .usePlugin(TablePlugin.create(context))
-            .usePlugin(TaskListPlugin.create(context))
-            .build()
-    }
-    AndroidView(
-        modifier = modifier.verticalScroll(scrollState),
-        factory = { ctx ->
-            TextView(ctx).apply {
-                this.textSize = fontSize
-                setPadding(32, 24, 32, 24)
-            }
-        },
-        update = { textView ->
-            textView.textSize = fontSize
-            markwon.setMarkdown(textView, content)
-        }
     )
 }

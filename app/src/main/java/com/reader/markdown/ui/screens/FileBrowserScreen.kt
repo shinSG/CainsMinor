@@ -18,6 +18,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.documentfile.provider.DocumentFile
+import com.reader.markdown.settings.SettingsManager
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -33,7 +34,9 @@ data class FileItem(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun FileBrowserScreen(
-    onFileSelected: (String) -> Unit
+    settings: SettingsManager,
+    onFileSelected: (String) -> Unit,
+    onSettingsClick: () -> Unit
 ) {
     val context = LocalContext.current
     var files by remember { mutableStateOf<List<FileItem>>(emptyList()) }
@@ -118,6 +121,10 @@ fun FileBrowserScreen(
                         folderPickerLauncher.launch(null)
                     }) {
                         Icon(Icons.Default.FolderOpen, contentDescription = "选择文件夹")
+                    }
+                    // 设置
+                    IconButton(onClick = onSettingsClick) {
+                        Icon(Icons.Default.Settings, contentDescription = "设置")
                     }
                 }
             )
