@@ -1,7 +1,9 @@
 package com.reader.markdown
 
 import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.fillMaxSize
@@ -9,20 +11,24 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
-import androidx.navigation.compose.NavHost
-import androidx.navigation.compose.composable
-import androidx.navigation.compose.rememberNavController
 import com.reader.markdown.ui.screens.FileBrowserScreen
 import com.reader.markdown.ui.screens.MarkdownViewerScreen
 import com.reader.markdown.ui.theme.MarkdownReaderTheme
 import java.io.File
 
 class MainActivity : ComponentActivity() {
+
+    companion object {
+        private const val TAG = "CainsMinor"
+        var lastDebugLog = ""
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // 处理 ACTION_VIEW intent（从其他app打开.md文件）
-        val openFilePath = handleViewIntent(intent)
+        // 在 setContent 之前解析 intent，读取文件内容写入缓存
+        val externalFile = resolveIntent(intent)
+        Log.d(TAG, "onCreate externalFile=$externalFile")
 
         setContent {
             MarkdownReaderTheme {
@@ -30,38 +36,35 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    val navController = rememberNavController()
+                    // 用状态管理当前显示的文件路径，null = 显示文件浏览器
+                    var currentFilePath by remember { mutableStateOf(externalFile?.first) }
+                    var currentDisplayName by remember { mutableStateOf(externalFile?.second) }
+                    var fromExternal by remember { mutableStateOf(externalFile != null) }
 
-                    // 如果是从外部打开的文件，直接跳转到阅读页面
-                    val startDestination = if (openFilePath != null) {
-                        "viewer/${java.net.URLEncoder.encode(openFilePath, "UTF-8")}"
+                    if (currentFilePath != null) {
+                        // 显示 Markdown 阅读页
+                        MarkdownViewerScreen(
+                            filePath = currentFilePath!!,
+                            displayTitle = currentDisplayName,
+                            onBack = {
+                                if (fromExternal) {
+                                    finish() // 从外部打开的，返回桌面
+                                } else {
+                                    currentFilePath = null
+                                    currentDisplayName = null
+                                    fromExternal = false
+                                }
+                            }
+                        )
                     } else {
-                        "browser"
-                    }
-
-                    NavHost(navController = navController, startDestination = startDestination) {
-                        composable("browser") {
-                            FileBrowserScreen(
-                                onFileSelected = { filePath ->
-                                    navController.navigate("viewer/${java.net.URLEncoder.encode(filePath, "UTF-8")}")
-                                }
-                            )
-                        }
-                        composable("viewer/{filePath}") { backStackEntry ->
-                            val encodedPath = backStackEntry.arguments?.getString("filePath") ?: ""
-                            val filePath = java.net.URLDecoder.decode(encodedPath, "UTF-8")
-                            MarkdownViewerScreen(
-                                filePath = filePath,
-                                onBack = {
-                                    // 如果是从外部app打开的，返回时退出app
-                                    if (openFilePath != null && navController.previousBackStackEntry == null) {
-                                        finish()
-                                    } else {
-                                        navController.popBackStack()
-                                    }
-                                }
-                            )
-                        }
+                        // 显示文件浏览器
+                        FileBrowserScreen(
+                            onFileSelected = { filePath ->
+                                currentFilePath = filePath
+                                currentDisplayName = null
+                                fromExternal = false
+                            }
+                        )
                     }
                 }
             }
@@ -70,51 +73,117 @@ class MainActivity : ComponentActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        // 处理新的intent（app已经打开时再次接收文件）
-        val openFilePath = handleViewIntent(intent)
-        if (openFilePath != null) {
-            // 重新创建UI以打开新文件
+        Log.d(TAG, "onNewIntent: action=${intent.action}")
+        val externalFile = resolveIntent(intent)
+        if (externalFile != null) {
+            // 重新创建 Activity 来打开新文件
             recreate()
         }
     }
 
     /**
-     * 处理 ACTION_VIEW intent，将 content:// URI 复制到缓存目录，返回本地文件路径
+     * 解析 intent，读取 content:// 文件内容写入缓存。
+     * @return Pair(缓存文件绝对路径, 原始文件名) 或 null
      */
-    private fun handleViewIntent(intent: Intent?): String? {
-        if (intent?.action != Intent.ACTION_VIEW) return null
-        val uri = intent.data ?: return null
+    private fun resolveIntent(intent: Intent?): Pair<String, String>? {
+        if (intent == null) {
+            lastDebugLog = "intent is null"
+            return null
+        }
 
-        return try {
-            val fileName = getFileName(uri) ?: "opened_file.md"
-            val tempFile = File(cacheDir, fileName)
-            contentResolver.openInputStream(uri)?.use { input ->
-                tempFile.outputStream().use { output ->
-                    input.copyTo(output)
+        val sb = StringBuilder()
+        sb.appendLine("action=${intent.action}")
+        sb.appendLine("type=${intent.type}")
+        sb.appendLine("data=${intent.data}")
+
+        val uri: Uri? = when {
+            intent.action == Intent.ACTION_VIEW && intent.data != null -> {
+                sb.appendLine("来源: ACTION_VIEW")
+                intent.data
+            }
+            intent.action == Intent.ACTION_SEND -> {
+                sb.appendLine("来源: ACTION_SEND")
+                getParcelableExtraCompat(intent, Intent.EXTRA_STREAM)
+            }
+            intent.clipData != null && intent.clipData!!.itemCount > 0 -> {
+                sb.appendLine("来源: clipData")
+                intent.clipData!!.getItemAt(0).uri
+            }
+            intent.data != null -> {
+                sb.appendLine("来源: data fallback")
+                intent.data
+            }
+            else -> {
+                sb.appendLine("来源: extras扫描")
+                var found: Uri? = null
+                intent.extras?.let { extras ->
+                    for (key in extras.keySet()) {
+                        val v = extras.get(key)
+                        if (v is Uri) { found = v; break }
+                        if (v is String && v.startsWith("content://")) { found = Uri.parse(v); break }
+                    }
+                }
+                found
+            }
+        }
+
+        sb.appendLine("uri=$uri")
+
+        if (uri == null) {
+            lastDebugLog = sb.toString()
+            return null
+        }
+
+        var displayName = "shared.md"
+        try {
+            contentResolver.query(uri, null, null, null, null)?.use { c ->
+                if (c.moveToFirst()) {
+                    val idx = c.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                    if (idx >= 0) c.getString(idx)?.let { displayName = it }
                 }
             }
-            // 清除 intent 避免重复处理
+        } catch (_: Exception) {}
+        if (displayName.isBlank()) displayName = "shared.md"
+
+        val cacheName = "${System.currentTimeMillis()}.md"
+        sb.appendLine("显示名=$displayName, 缓存名=$cacheName")
+
+        return try {
+            val content = contentResolver.openInputStream(uri)?.use { it.bufferedReader().readText() }
+
+            if (content.isNullOrEmpty()) {
+                sb.appendLine("内容为空")
+                lastDebugLog = sb.toString()
+                return null
+            }
+
+            sb.appendLine("内容长度=${content.length}")
+
+            val cacheFile = File(cacheDir, cacheName)
+            cacheFile.writeText(content)
+
             intent.action = null
             intent.data = null
-            tempFile.absolutePath
+            intent.removeExtra(Intent.EXTRA_STREAM)
+
+            lastDebugLog = sb.toString()
+            Log.d(TAG, lastDebugLog)
+
+            Pair(cacheFile.absolutePath, displayName)
         } catch (e: Exception) {
-            e.printStackTrace()
+            sb.appendLine("异常: ${e.message}")
+            lastDebugLog = sb.toString()
+            Log.e(TAG, lastDebugLog, e)
             null
         }
     }
 
-    private fun getFileName(uri: android.net.Uri): String? {
-        // 尝试从 content provider 获取文件名
-        val cursor = contentResolver.query(uri, null, null, null, null)
-        cursor?.use {
-            if (it.moveToFirst()) {
-                val nameIndex = it.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
-                if (nameIndex >= 0) {
-                    return it.getString(nameIndex)
-                }
-            }
+    @Suppress("DEPRECATION")
+    private fun <T> getParcelableExtraCompat(intent: Intent, key: String): T? {
+        return if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            intent.getParcelableExtra(key, Uri::class.java) as? T
+        } else {
+            intent.getParcelableExtra(key) as? T
         }
-        // fallback: 从 URI path 获取
-        return uri.lastPathSegment
     }
 }
