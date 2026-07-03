@@ -25,11 +25,16 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.reader.markdown.settings.SettingsManager
+import com.reader.markdown.agent.LlmService
+import com.reader.markdown.agent.Suggestion
+import com.reader.markdown.agent.SuggestionOverlay
+import com.reader.markdown.agent.WritingAgent
 import io.noties.markwon.Markwon
 import io.noties.markwon.ext.strikethrough.StrikethroughPlugin
 import io.noties.markwon.ext.tables.TablePlugin
 import io.noties.markwon.ext.tasklist.TaskListPlugin
 import java.io.File
+import kotlinx.coroutines.launch
 
 data class TocItem(
     val level: Int,
@@ -85,6 +90,13 @@ fun MarkdownViewerScreen(
         else -> FontFamily.SansSerif
     }
     val editorFontSize = settings.editorFontSize
+
+    // AI 写作助手
+    val llmService = remember { LlmService(settings) }
+    val writingAgent = remember { WritingAgent(settings, llmService) }
+    val suggestion by writingAgent.suggestion.collectAsState()
+    val isGenerating by writingAgent.isGenerating.collectAsState()
+    val coroutineScope = rememberCoroutineScope()
 
     // 加载文件
     LaunchedEffect(filePath) {
@@ -184,6 +196,23 @@ fun MarkdownViewerScreen(
                 },
                 actions = {
                     if (isEditing) {
+                        // AI 续写按钮
+                        IconButton(
+                            onClick = {
+                                if (!isGenerating) {
+                                    coroutineScope.launch {
+                                        writingAgent.requestCompletionStream(editContent, editContent.length)
+                                    }
+                                }
+                            },
+                            enabled = !isGenerating && settings.isLlmConfigured
+                        ) {
+                            if (isGenerating) {
+                                CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                            } else {
+                                Icon(Icons.Default.AutoAwesome, contentDescription = "AI续写", tint = MaterialTheme.colorScheme.primary)
+                            }
+                        }
                         IconButton(onClick = { saveFile() }) {
                             Icon(Icons.Default.Save, contentDescription = "保存", tint = MaterialTheme.colorScheme.primary)
                         }
@@ -246,18 +275,37 @@ fun MarkdownViewerScreen(
             }
 
             if (isEditing) {
-                // 编辑器
-                EditorContent(
-                    content = editContent,
-                    fontSize = editorFontSize,
-                    tabSize = settings.editorTabSize,
-                    wordWrap = settings.editorWordWrap,
-                    onContentChange = { newContent ->
-                        editContent = newContent
-                        isModified = (newContent != content)
-                    },
-                    modifier = Modifier.fillMaxSize()
-                )
+                // 编辑器 + AI 建议
+                Box(modifier = Modifier.fillMaxSize()) {
+                    EditorContent(
+                        content = editContent,
+                        fontSize = editorFontSize,
+                        tabSize = settings.editorTabSize,
+                        wordWrap = settings.editorWordWrap,
+                        onContentChange = { newContent ->
+                            editContent = newContent
+                            isModified = (newContent != content)
+                            // 输入时自动触发续写（可选：加防抖）
+                            if (settings.isLlmConfigured && !isGenerating) {
+                                writingAgent.dismiss()
+                            }
+                        },
+                        modifier = Modifier.fillMaxSize()
+                    )
+
+                    // AI 建议覆盖层（底部）
+                    SuggestionOverlay(
+                        suggestion = suggestion,
+                        isGenerating = isGenerating,
+                        onAccept = { acceptedText ->
+                            editContent += acceptedText
+                            isModified = (editContent != content)
+                            writingAgent.dismiss()
+                        },
+                        onDismiss = { writingAgent.dismiss() },
+                        modifier = Modifier.align(Alignment.BottomCenter)
+                    )
+                }
             } else {
                 Row(Modifier.fillMaxSize()) {
                     BoxWithConstraints {
