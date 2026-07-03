@@ -29,6 +29,7 @@ import com.reader.markdown.agent.LlmService
 import com.reader.markdown.agent.Suggestion
 import com.reader.markdown.agent.SuggestionOverlay
 import com.reader.markdown.agent.WritingAgent
+import com.reader.markdown.agent.TocGenerator
 import io.noties.markwon.Markwon
 import io.noties.markwon.ext.strikethrough.StrikethroughPlugin
 import io.noties.markwon.ext.tables.TablePlugin
@@ -196,6 +197,71 @@ fun MarkdownViewerScreen(
                 },
                 actions = {
                     if (isEditing) {
+                        // 目录生成按钮
+                        var showTocMenu by remember { mutableStateOf(false) }
+                        Box {
+                            IconButton(onClick = { showTocMenu = true }) {
+                                Icon(Icons.Default.Toc, contentDescription = "生成目录")
+                            }
+                            DropdownMenu(expanded = showTocMenu, onDismissRequest = { showTocMenu = false }) {
+                                if (TocGenerator.hasToc(editContent)) {
+                                    // 更新目录
+                                    DropdownMenuItem(
+                                        text = { Text("更新目录") },
+                                        onClick = {
+                                            val (newContent, _) = TocGenerator.insertOrUpdateToc(editContent)
+                                            editContent = newContent
+                                            isModified = (editContent != content)
+                                            showTocMenu = false
+                                        },
+                                        leadingIcon = { Icon(Icons.Default.Refresh, contentDescription = null) }
+                                    )
+                                    // 删除目录
+                                    DropdownMenuItem(
+                                        text = { Text("删除目录") },
+                                        onClick = {
+                                            editContent = TocGenerator.removeToc(editContent)
+                                            isModified = (editContent != content)
+                                            showTocMenu = false
+                                        },
+                                        leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null) }
+                                    )
+                                } else {
+                                    // 插入目录 - 选择层级
+                                    DropdownMenuItem(
+                                        text = { Text("插入目录（2级）") },
+                                        onClick = {
+                                            val (newContent, _) = TocGenerator.insertOrUpdateToc(editContent, 2)
+                                            editContent = newContent
+                                            isModified = (editContent != content)
+                                            showTocMenu = false
+                                        },
+                                        leadingIcon = { Icon(Icons.Default.FormatListBulleted, contentDescription = null) }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("插入目录（3级）") },
+                                        onClick = {
+                                            val (newContent, _) = TocGenerator.insertOrUpdateToc(editContent, 3)
+                                            editContent = newContent
+                                            isModified = (editContent != content)
+                                            showTocMenu = false
+                                        },
+                                        leadingIcon = { Icon(Icons.Default.FormatListBulleted, contentDescription = null) }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("插入目录（4级）") },
+                                        onClick = {
+                                            val (newContent, _) = TocGenerator.insertOrUpdateToc(editContent, 4)
+                                            editContent = newContent
+                                            isModified = (editContent != content)
+                                            showTocMenu = false
+                                        },
+                                        leadingIcon = { Icon(Icons.Default.FormatListBulleted, contentDescription = null) }
+                                    )
+                                }
+                            }
+                        }
+
                         // AI 续写按钮
                         IconButton(
                             onClick = {
