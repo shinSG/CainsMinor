@@ -192,6 +192,94 @@ fun SettingsScreen(
             )
 
             // ═══════════════════════════════════════
+            // LLM API 设置
+            // ═══════════════════════════════════════
+            SettingsSection("LLM API")
+
+            SettingsHint("配置 OpenAI 兼容的 API 接口，用于 AI 辅助功能")
+
+            // Base URL
+            var llmBaseUrl by remember { mutableStateOf(settings.llmBaseUrl) }
+            SettingsTextField(
+                title = "Base URL",
+                value = llmBaseUrl,
+                placeholder = "https://api.openai.com/v1",
+                onValueChange = {
+                    llmBaseUrl = it
+                    settings.llmBaseUrl = it
+                }
+            )
+
+            // API Key
+            var llmApiKey by remember { mutableStateOf(settings.llmApiKey) }
+            SettingsTextField(
+                title = "API Key",
+                value = llmApiKey,
+                placeholder = "sk-...",
+                isPassword = true,
+                onValueChange = {
+                    llmApiKey = it
+                    settings.llmApiKey = it
+                }
+            )
+
+            // Model Name
+            var llmModelName by remember { mutableStateOf(settings.llmModelName) }
+            SettingsTextField(
+                title = "模型名称",
+                value = llmModelName,
+                placeholder = "gpt-4o",
+                onValueChange = {
+                    llmModelName = it
+                    settings.llmModelName = it
+                }
+            )
+
+            // Temperature
+            var llmTemperature by remember { mutableStateOf(settings.llmTemperature) }
+            SettingsSlider(
+                title = "Temperature",
+                value = llmTemperature,
+                valueRange = 0f..2f,
+                steps = 19,
+                suffix = "",
+                onValueChange = {
+                    llmTemperature = it
+                    settings.llmTemperature = it
+                }
+            )
+
+            // Max Tokens
+            var llmMaxTokens by remember { mutableStateOf(settings.llmMaxTokens) }
+            SettingsSlider(
+                title = "Max Tokens",
+                value = llmMaxTokens.toFloat(),
+                valueRange = 256f..16384f,
+                steps = 63,
+                suffix = "",
+                onValueChange = {
+                    llmMaxTokens = it.toInt()
+                    settings.llmMaxTokens = it.toInt()
+                }
+            )
+
+            // System Prompt
+            var llmSystemPrompt by remember { mutableStateOf(settings.llmSystemPrompt) }
+            SettingsTextField(
+                title = "System Prompt",
+                value = llmSystemPrompt,
+                placeholder = "你是一个Markdown文档助手...",
+                isMultiline = true,
+                onValueChange = {
+                    llmSystemPrompt = it
+                    settings.llmSystemPrompt = it
+                }
+            )
+
+            // 测试连接
+            SettingsTestButton(settings)
+
+            // ═══════════════════════════════════════
             // 其他
             // ═══════════════════════════════════════
             SettingsSection("其他")
@@ -345,6 +433,7 @@ fun SettingsAbout() {
                     Text("• 目录导航", style = MaterialTheme.typography.bodySmall)
                     Text("• 自定义主题与字体", style = MaterialTheme.typography.bodySmall)
                     Text("• SAF 文件浏览", style = MaterialTheme.typography.bodySmall)
+                    Text("• LLM API 集成", style = MaterialTheme.typography.bodySmall)
                     Spacer(modifier = Modifier.height(8.dp))
                     Text("GitHub: shinSG/CainsMinor", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
                 }
@@ -363,4 +452,111 @@ fun SettingsAbout() {
         },
         modifier = Modifier.clickable { showDialog = true }
     )
+}
+
+@Composable
+fun SettingsHint(text: String) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+    )
+}
+
+@Composable
+fun SettingsTextField(
+    title: String,
+    value: String,
+    placeholder: String,
+    isPassword: Boolean = false,
+    isMultiline: Boolean = false,
+    onValueChange: (String) -> Unit
+) {
+    Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+        Text(title, style = MaterialTheme.typography.bodyLarge)
+        Spacer(modifier = Modifier.height(4.dp))
+        OutlinedTextField(
+            value = value,
+            onValueChange = onValueChange,
+            placeholder = { Text(placeholder, style = MaterialTheme.typography.bodySmall) },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = !isMultiline,
+            maxLines = if (isMultiline) 4 else 1,
+            visualTransformation = if (isPassword) {
+                androidx.compose.ui.text.input.PasswordVisualTransformation()
+            } else {
+                androidx.compose.ui.text.input.VisualTransformation.None
+            },
+            textStyle = MaterialTheme.typography.bodyMedium
+        )
+    }
+}
+
+@Composable
+fun SettingsTestButton(settings: SettingsManager) {
+    var testResult by remember { mutableStateOf<String?>(null) }
+    var isTesting by remember { mutableStateOf(false) }
+
+    Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+        Button(
+            onClick = {
+                isTesting = true
+                testResult = null
+                // 简单的连接测试
+                val url = settings.llmBaseUrl.trimEnd('/')
+                val apiKey = settings.llmApiKey
+                val model = settings.llmModelName
+
+                if (url.isBlank() || apiKey.isBlank()) {
+                    testResult = "❌ 请先填写 Base URL 和 API Key"
+                    isTesting = false
+                    return@Button
+                }
+
+                try {
+                    val testUrl = "$url/models"
+                    val connection = java.net.URL(testUrl).openConnection() as java.net.HttpURLConnection
+                    connection.requestMethod = "GET"
+                    connection.setRequestProperty("Authorization", "Bearer $apiKey")
+                    connection.connectTimeout = 10000
+                    connection.readTimeout = 10000
+
+                    val code = connection.responseCode
+                    if (code == 200) {
+                        testResult = "✅ 连接成功！模型: $model"
+                    } else {
+                        val error = connection.errorStream?.bufferedReader()?.readText()?.take(100) ?: ""
+                        testResult = "❌ HTTP $code: $error"
+                    }
+                    connection.disconnect()
+                } catch (e: Exception) {
+                    testResult = "❌ 连接失败: ${e.message?.take(80)}"
+                }
+                isTesting = false
+            },
+            enabled = !isTesting && settings.llmBaseUrl.isNotBlank() && settings.llmApiKey.isNotBlank(),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            if (isTesting) {
+                CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("测试中...")
+            } else {
+                Icon(Icons.Default.PlayArrow, contentDescription = null)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("测试连接")
+            }
+        }
+
+        if (testResult != null) {
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = testResult!!,
+                style = MaterialTheme.typography.bodySmall,
+                color = if (testResult!!.startsWith("✅")) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.error
+            )
+        }
+    }
 }
